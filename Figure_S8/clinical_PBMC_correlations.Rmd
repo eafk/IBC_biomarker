@@ -1,0 +1,64 @@
+---
+title: "clinical_PBMC_correlations.Rmd"
+date: "2026-06-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(dplyr)
+library(readr)
+```
+
+## tumor characteristics mapped onto CRISPR data
+No statistics because the subgroups start making the n small and unbalanced with too many repeated tests, so this is exploratory analysis.
+
+Unfortunately geom_violin doesn't work well with geom_text_repel, just fix the label location in Adobe Illustrator.
+```{r}
+Final_mean_PBMC_CRISPR_60 = read_delim(file = "Final_mean_PBMC_CRISPR_60min.tsv", delim = "\t")
+
+# try adding false positive and false negative labels
+labels = c("I14","I23","I25","H04","N39","N25","N11","N16","I02","H23","N17","I32","N23","I11","N19")
+
+# stage graph- Figure S8A
+Final_mean_PBMC_CRISPR_60 %>%
+  ggplot(aes(x = Stage, y =`Mean Fluorescence Recovery (ΔF%)`, fill = `Sample Type`))+
+  geom_violin(alpha = 0.5, position = "identity")+
+  geom_dotplot(binaxis='y', stackdir='center', dotsize=0.5)+
+  facet_wrap(.~`crRNA Target`, scales = "free_y")+
+  theme_bw()+
+  scale_fill_manual(values = c(
+    "Healthy" = "#3b3b3b",
+    "non-IBC" = "#4173C6",
+    "IBC" = "#FF5733"))+
+  geom_text_repel(
+    data = subset(Final_mean_PBMC_CRISPR_60,(`Donor ID` %in% labels)),
+    aes(label = `Donor ID`, group = Subtype),
+    segment.color = "grey50",
+    max.overlaps = Inf,
+    box.padding = 0.5)+
+  theme(legend.position="top")
+
+
+# subtype graph- Figure S8B
+Final_mean_PBMC_CRISPR_60 %>%
+  ggplot(aes(x = Subtype, y =`Mean Fluorescence Recovery (ΔF%)`, fill = `Sample Type`))+
+  geom_violin(alpha = 0.5, position = "identity")+
+  geom_dotplot(binaxis='y', stackdir='center', dotsize=0.5)+
+  facet_wrap(.~`crRNA Target`, scales = "free_y")+
+  theme_bw()+
+  scale_fill_manual(values = c(
+    "Healthy" = "#3b3b3b",
+    "non-IBC" = "#4173C6",
+    "IBC" = "#FF5733"))+
+  geom_text_repel(
+    data = subset(Final_mean_PBMC_CRISPR_60,(`Donor ID` %in% labels)),
+    aes(label = `Donor ID`, group = Subtype),
+    segment.color = "grey50",
+    max.overlaps = Inf,
+    box.padding = 0.5)+
+  theme(legend.position="top")+
+  theme(axis.text.x=element_text(angle=90,hjust = 1))
+
+```
