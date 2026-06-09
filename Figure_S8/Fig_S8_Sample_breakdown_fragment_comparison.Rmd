@@ -1,0 +1,161 @@
+---
+title: "Fig_S8_Sample_breakdown_fragment_comparison.Rmd"
+date: "2026-06-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(GenomicAlignments)
+library(GenomicRanges)
+library(Rsamtools)
+```
+
+
+## bash processing of bam files- need to make the files smaller, so filter for just the TRBD1, TRBJ1, TRBC1 region
+
+```{bash, eval = FALSE}
+# bed file to capture the whole region
+# cat TRBD1toC1.bed
+# 7        142786212        142793368        TRBD1_J1-123456_C1        0        +        TR
+
+# TRBJ_bedtools_intersect.sh 
+ 
+#!/bin/bash
+# this script takes bam files from the command line as the input for bedtools intersect 
+# the output is a bam file that has been filtered for interesting genes (and sorted) to do more analysis on from the PBMCs
+# the sorted file is also indexed for viewing in IGV
+ 
+mkdir -p TRBD1toC1_filtered_bam
+ 
+for inputFile in "$@"; do
+        outputFile1=${inputFile/_combined_primary_gene.bam/_filter_TRB.sort.bam}
+ 
+        bedtools intersect -a ${inputFile} -b IBC_bed/TRBD1toC1.bed | samtools sort -o TRBD1toC1_filtered_bam/${outputFile1}
+        samtools index TRBD1toC1_filtered_bam/${outputFile1}
+done
+```
+
+
+## Bring in the merged files and library metadata, define the 3'end sites
+
+```{r, eval = FALSE}
+# make a list of the bam file names
+bam_files <- list.files("IBC_bam_new_gene_counts", pattern = "\\_combined_primary_gene.bam$", full.names = TRUE)
+bam_files
+# clean sample names (no .bam)
+names(bam_files) <- sub("\\_combined_primary_gene.bam$", "", basename(bam_files))
+
+# define the 3' end sites
+target_sites <- tibble(
+  Target = c("TRBJ1-1","TRBJ1-2","TRBJ1-6"),
+  rname = c(7,7,7),
+  three_prime = c(142786931, 142787068, 142789045)
+)
+
+librarysize= read_delim("IBC_librarysize_metadata.tsv", delim = "\t")
+```
+
+## function definitions
+developed with chatgpt
+```{r}
+
+# there's some variation at the 5'end of TRBJ1-6 that might be a modification that meant that the first 2 nt were softclipped
+# so add an additional step to extract the softclipped nt as well
+extract_softclip <- function(cigar) {
+  ops <- str_extract_all(cigar, "\\d+S")[[1]]
+  if (length(ops) == 0) return(0)
+  sum(as.numeric(sub("S", "", ops)))
+}
+
+# the function uses read2, since this preserves the RNA 3' end, which is the focus of this analysis since CRISPR detection is designed for the 3' end to correspond to the Cas12a seed
+get_read2_features <- function(bam, sample_name) {
+  
+  pairs <- readGAlignmentPairs(
+    bam,
+    param = ScanBamParam(
+      flag = scanBamFlag(
+        isProperPair = TRUE,
+        isUnmappedQuery = FALSE,
+        hasUnmappedMate = FALSE
+      )
+    )
+  )
+  
+  r2 <- second(pairs)
+  
+  df <- tibble(
+    sample = sample_name,
+    rname = as.character(seqnames(r2)),
+    strand = as.character(strand(r2)),
+    start = start(r2),
+    end = end(r2),
+    frag_length = cigarWidthAlongQuerySpace(cigar(r2)),
+    softclip_bp = vapply(cigar(r2), extract_softclip, numeric(1))
+  )
+  
+  # strand-aware 3′ end
+  df <- df %>%
+    mutate(
+      three_prime = ifelse(strand == "-", end, start) # change to -
+    )
+  
+  df
+}
+
+```
+
+## implement analysis across all bam files supplied
+```{r, eval = FALSE}
+bam_files <- list.files("IBC_bam_new_gene_counts/TRBD1toC1_filtered_bam", pattern = ".bam$", full.names = TRUE)
+bam_files
+# clean sample names (no .bam)
+names(bam_files) <- sub("\\_filter_TRB.sort.bam$", "", basename(bam_files))
+
+# implement analysis across all bam files supplied
+reads_FINAL <- imap_dfr(bam_files, get_read2_features)
+
+write_delim(reads_FINAL, file = "3end_and_length_categorizing_TRBD1toC1_alldatasets.tsv", delim = "\t")
+```
+
+## filter the categorized TRBD1toC1 reads to the specific 3' ends associated with TRBJ1-1, TRBJ1-2, and TRBJ1-6 fragments
+```{r}
+reads_FINAL <- read_delim(file = "3end_and_length_categorizing_TRBD1toC1_alldatasets.tsv", delim = "\t")
+
+# filter to the specified 3'ends of the TRBJ1-1, 1-2, 1-6 fragments
+filtered_FINAL <- reads_FINAL %>%
+  inner_join(target_sites, by = c("rname", "three_prime"))
+
+# count the fragment's read lengths
+counts_FINAL <- filtered_FINAL %>%
+  dplyr::count(sample, frag_length, Target, name = "count")
+
+# CPM normalization
+counts_cpm_FINAL <- counts_FINAL %>%
+  left_join(librarysize) %>%
+  mutate(cpm = count / library_size * 1e6)
+
+counts_cpm_FINAL$disease_category = factor(counts_cpm_FINAL$disease_category, levels = c("Healthy","non-IBC","IBC"))
+
+counts_cpm_FINAL$sample_type = factor(counts_cpm_FINAL$sample_type, levels = c("Frozen tissue","FFPE","PBMC","Plasma"))
+
+write_delim(counts_cpm_FINAL, file = "FigS7_3end_fragment_filtering_alldatasets.tsv", delim = "\t")
+```
+
+## Figure S8
+```{r}
+counts_cpm_FINAL = read_delim(file = "FigS7_3end_fragment_filtering_alldatasets.tsv", delim = "\t")
+
+ggplot(counts_cpm_FINAL, aes(x = frag_length, y = cpm)) +
+  geom_col(aes(fill = disease_category), position = position_dodge(width = 0.75))+
+  geom_point(aes(group = disease_category), position = position_dodge(width = 0.75))+ # not aligned yet
+  facet_grid(sample_type ~ Target, scales = "free") +
+  theme_bw() +
+  theme(legend.position="top")+
+  labs(y = "CPM", x = "Fragment length (nt)",title = "filtered by read2 3'end individual datasets")+
+  scale_fill_manual(values = c(
+    "Healthy" = "darkgray",
+    "non-IBC" = "#4173C6",
+    "IBC" = "#FF5733"))
+```
