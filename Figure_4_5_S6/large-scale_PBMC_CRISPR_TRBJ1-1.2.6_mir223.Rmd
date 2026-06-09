@@ -1,0 +1,734 @@
+---
+title: "large-scale_PBMC_CRISPR_TRBJ1-1.2.6_mir223.Rmd"
+date: "2026-06-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(plotROC)
+library(pROC)
+library(ggrepel)
+library(FSA)
+library(ComplexUpset)
+```
+
+## Calculate the Mean normalized fluorescence from the replicates
+```{r}
+rawData = read_delim(file = "large_scale_CRISPR_raw_data.tsv", delim = "\t")
+
+rawData$`Reaction Conditions` = factor(rawData$`Reaction Conditions`, levels = c("PNK+/PolyA+/RT+","PNK+/PolyA+/RT-","Max Fluorescence in PCR buffer"))
+rawData$Sample_Name = factor(rawData$Sample_Name, levels = c("Healthy PBMC","Non-IBC PBMC","IBC PBMC"))
+rawData$`crRNA Target` = factor(rawData$`crRNA Target`, levels = c("TRBJ1-1","TRBJ1-2","TRBJ1-6","mir-223-3p"))
+rawData$Replicate <- as.factor(rawData$Replicate)
+rawData$`CRISPR Date` <- as.factor(rawData$`CRISPR Date`)
+
+baselineData = rawData %>% 
+  filter(Min <=0) %>% 
+  select(`CRISPR ID`, Min, Fluorescence) %>% 
+  pivot_wider(values_from = Fluorescence, names_from = Min) %>% 
+  rowwise() %>%
+  mutate(Baseline_mean = mean(c_across(`-10`:`0`))) %>% 
+  select(`CRISPR ID`, Baseline_mean)
+
+Fmax_TRBJ1_6_2025_05_02 = baselineData %>% 
+  filter(`CRISPR ID` %in% c("B12_Fmax_2025-05-02")) %>% ## A12 and B12 are replicates, B12 is higher
+  pull(Baseline_mean)
+
+Fmax_TRBJ1_6_2025_05_19 = baselineData %>% 
+  filter(`CRISPR ID` %in% c("B12_Fmax_2025-05-19")) %>% ## A12 and B12 are replicates, B12 is higher
+  pull(Baseline_mean)
+
+Fmax_mir223_2025_05_20 = baselineData %>% 
+  filter(`CRISPR ID` %in% c("G12_Fmax_2025-05-20")) %>% ## G12 and H12 are replicates, G12 is higher
+  pull(Baseline_mean)
+
+Fmax_mir223_2025_05_22 = baselineData %>% 
+  filter(`CRISPR ID` %in% c("G12_Fmax_2025-05-22")) %>% ## G12 and H12 are replicates, G12 is higher
+  pull(Baseline_mean)
+# ~~~~~~~~~~~~~~~~
+Fmax_TRBJ1_1_2025_06_11 = baselineData %>% 
+  filter(`CRISPR ID` %in% c("A12_Fmax_2025-06-11")) %>% ## A12 and B12 are replicates, A12 is higher
+  pull(Baseline_mean)
+
+Fmax_TRBJ1_1_2025_06_16 = baselineData %>% 
+  filter(`CRISPR ID` %in% c("B12_Fmax_2025-06-16")) %>% ## A12 and B12 are replicates, B12 is higher
+  pull(Baseline_mean)
+
+Fmax_TRBJ1_2_2025_06_02 = baselineData %>% 
+  filter(`CRISPR ID` %in% c("G12_Fmax_2025-06-02")) %>% ## G12 and H12 are replicates, G12 is higher
+  pull(Baseline_mean)
+
+Fmax_TRBJ1_2_2025_06_13 = baselineData %>% 
+  filter(`CRISPR ID` %in% c("G12_Fmax_2025-06-13")) %>% ## G12 and H12 are replicates, G12 is higher
+  pull(Baseline_mean)
+
+
+# unicode for delta in R is \u0394, but it turned out I could just insert Δ directly
+normalizedData = rawData %>% 
+  left_join(baselineData) %>% 
+  mutate("Fluorescence Recovery (ΔF%)" = case_when(`CRISPR Date` == "2025-05-02" ~ ((Fluorescence-Baseline_mean)/(Fmax_TRBJ1_6_2025_05_02-Baseline_mean))*100,
+                                                    `CRISPR Date` == "2025-05-19" ~ ((Fluorescence-Baseline_mean)/(Fmax_TRBJ1_6_2025_05_19-Baseline_mean))*100,
+                                                    `CRISPR Date` == "2025-05-20" ~ ((Fluorescence-Baseline_mean)/(Fmax_mir223_2025_05_20-Baseline_mean))*100,
+                                                    `CRISPR Date` == "2025-05-22" ~ ((Fluorescence-Baseline_mean)/(Fmax_mir223_2025_05_22-Baseline_mean))*100,
+                                                   `CRISPR Date` == "2025-06-11" ~ ((Fluorescence-Baseline_mean)/(Fmax_TRBJ1_1_2025_06_11-Baseline_mean))*100,
+                                                   `CRISPR Date` == "2025-06-16" ~ ((Fluorescence-Baseline_mean)/(Fmax_TRBJ1_1_2025_06_16-Baseline_mean))*100,
+                                                   `CRISPR Date` == "2025-06-02" ~ ((Fluorescence-Baseline_mean)/(Fmax_TRBJ1_2_2025_06_02-Baseline_mean))*100,
+                                                   `CRISPR Date` == "2025-06-13" ~ ((Fluorescence-Baseline_mean)/(Fmax_TRBJ1_2_2025_06_13-Baseline_mean))*100)) 
+
+
+meannormalizedData = normalizedData %>% 
+  filter(`Sample Type`=="PBMC") %>%
+  select(Min, `Donor ID`, Sample_Name,`Sample Type`,Replicate,`Reaction Conditions`,`crRNA Target`,`Fluorescence Recovery (ΔF%)`) %>% # move Sample, Sample_Number out since I omitted it above
+  pivot_wider(values_from = `Fluorescence Recovery (ΔF%)`,names_from = Replicate) %>% 
+  mutate("Mean Fluorescence Recovery (ΔF%)"= rowMeans(across(`A`:`B`))) #%>% 
+  #select(-`A`,-`B`) # I'm keeping this in so that I can have one supplementary data file with the replicate values next to the mean values
+
+
+write_delim(meannormalizedData, file = "large_scale_CRISPR_mean_normalized_data.tsv", delim = "\t")
+```
+
+## Figures 4A and 4B
+```{r}
+
+# meannormalizedData = read_delim(file = "large_scale_CRISPR_mean_normalized_data.tsv", delim = "\t")
+
+# Figure 4A- got help from chatgpt to make the breaks consistent
+meannormalizedData %>% 
+  filter(
+    `Sample Type` == "PBMC",
+    `Reaction Conditions` == "PNK+/PolyA+/RT+",
+    Min >= 0
+  ) %>% 
+  filter(
+    (`crRNA Target` %in% c("TRBJ1-1", "TRBJ1-2") & Min < 65) |
+    (`crRNA Target` %in% c("TRBJ1-6", "mir-223-3p"))
+  ) %>% 
+  ggplot(aes(
+    x = Min,
+    y = `Mean Fluorescence Recovery (ΔF%)`,
+    color = Sample_Name,
+    group = `Donor ID`
+  )) +
+  geom_line() +
+  facet_grid(~`crRNA Target`, scales = "free_x") +
+scale_x_continuous(
+  breaks = function(x) {
+    if (max(x) <= 65) c(0, 20, 40, 60)
+    else c(0, 60, 120, 180)
+  }
+)  +
+  scale_color_manual(values = c("#3b3b3b", "#4173C6", "#FF5733")) +
+  theme_bw() +
+  theme(
+    legend.position = "top"
+  )
+
+# Figure 4B
+meannormalizedData %>%
+  filter(Min == 60) %>%
+  filter(`Sample Type`=="PBMC" & `Reaction Conditions` == "PNK+/PolyA+/RT+") %>% 
+  ggplot(aes(x = Sample_Name, y = `Mean Fluorescence Recovery (ΔF%)`, fill = Sample_Name))+
+  geom_violin(aes(alpha = 0.5))+
+  geom_dotplot(binaxis='y', stackdir='center', dotsize=0.5)+
+  facet_wrap(.~`crRNA Target`, scales = "free_y", nrow = 1)+
+  labs(title = graphName, subtitle = paste("Fluorescence at 60 min"))+
+  theme(axis.text.x=element_text(angle=90,hjust = 1))+
+  theme_bw()+
+  scale_fill_manual(values = c("#3b3b3b","#4173C6","#FF5733"))+
+  theme(axis.title.x=element_blank(),legend.position="top")
+
+```
+
+## Statistics at 60min timepoint
+## TRBJ1-1: IBC vs Healhty and non-IBC significant
+```{r}
+# filter the data to just the timepoint used for the violin plot and ROC curve (if I change the timepoint I'll need to update this)
+meannormalizedData_Min60_TRBJ1_1= meannormalizedData %>%
+  filter(Min == 60) %>%
+  filter(`Sample Type`=="PBMC" & `Reaction Conditions` == "PNK+/PolyA+/RT+" & `crRNA Target` == "TRBJ1-1")
+
+# non-parametric test is needed since data aren't normal or equal variance, shows the same significant result
+# part of base installation "stats" package
+kruskal.test(`Mean Fluorescence Recovery (ΔF%)` ~ Sample_Name, data = meannormalizedData_Min60_TRBJ1_1)
+
+# a follow up to Kruskal-Wallis test to get individual comparisons
+# Perform Dunn's test
+dunnTest(`Mean Fluorescence Recovery (ΔF%)` ~ Sample_Name, data = meannormalizedData_Min60_TRBJ1_1, method = "holm") # Holm is a good standard choice
+```
+
+## TRBJ1-2: IBC vs Healhty and non-IBC significant
+```{r}
+
+# filter the data to just the timepoint used for the violin plot and ROC curve (if I change the timepoint I'll need to update this)
+meannormalizedData_Min60_TRBJ1_2= meannormalizedData %>%
+  filter(Min == 60) %>%
+  filter(`Sample Type`=="PBMC" & `Reaction Conditions` == "PNK+/PolyA+/RT+" & `crRNA Target` == "TRBJ1-2")
+
+# non-parametric test is needed since data aren't normal or equal variance, shows the same significant result
+# part of base installation "stats" package
+kruskal.test(`Mean Fluorescence Recovery (ΔF%)` ~ Sample_Name, data = meannormalizedData_Min60_TRBJ1_2)
+
+# a follow up to Kruskal-Wallis test to get individual comparisons
+# Perform Dunn's test
+dunnTest(`Mean Fluorescence Recovery (ΔF%)` ~ Sample_Name, data = meannormalizedData_Min60_TRBJ1_2, method = "holm") # Holm is a good standard choice
+```
+
+## TRBJ1-6: IBC vs Healhty and non-IBC significant
+```{r}
+
+# filter the data to just the timepoint used for the violin plot and ROC curve (if I change the timepoint I'll need to update this)
+meannormalizedData_Min60_TRBJ1_6= meannormalizedData %>%
+  filter(Min == 60) %>%
+  filter(`Sample Type`=="PBMC" & `Reaction Conditions` == "PNK+/PolyA+/RT+" & `crRNA Target` == "TRBJ1-6")
+
+# non-parametric test is needed since data aren't normal or equal variance, shows the same significant result
+# part of base installation "stats" package
+kruskal.test(`Mean Fluorescence Recovery (ΔF%)` ~ Sample_Name, data = meannormalizedData_Min60_TRBJ1_6)
+
+# a follow up to Kruskal-Wallis test to get individual comparisons
+# Perform Dunn's test
+dunnTest(`Mean Fluorescence Recovery (ΔF%)` ~ Sample_Name, data = meannormalizedData_Min60_TRBJ1_6, method = "holm") # Holm is a good standard choice
+```
+
+## mir-223-3p = no comparisons significant
+```{r}
+
+# filter the data to just the timepoint used for the violin plot and ROC curve (if I change the timepoint I'll need to update this)
+meannormalizedData_Min60_mir_223= meannormalizedData %>%
+  filter(Min == 60) %>%
+  filter(`Sample Type`=="PBMC" & `Reaction Conditions` == "PNK+/PolyA+/RT+" & `crRNA Target` == "mir-223-3p")
+
+# non-parametric test is needed since data aren't normal or equal variance, shows the same significant result
+# part of base installation "stats" package
+kruskal.test(`Mean Fluorescence Recovery (ΔF%)` ~ Sample_Name, data = meannormalizedData_Min60_mir_223)
+
+# a follow up to Kruskal-Wallis test to get individual comparisons
+# Perform Dunn's test
+dunnTest(`Mean Fluorescence Recovery (ΔF%)` ~ Sample_Name, data = meannormalizedData_Min60_mir_223, method = "holm") # Holm is a good standard choice
+```
+
+
+## determine AUC curves for IBC vs combined Healthy and non-IBC- Figure S6A
+```{r}
+IBC_vs_all = meannormalizedData %>% 
+  filter(`Sample Type`=="PBMC" & `Reaction Conditions` == "PNK+/PolyA+/RT+" & `crRNA Target` != "mir-223-3p") %>%
+  mutate(Disease = case_when(Sample_Name == "IBC PBMC" ~ 1,
+                             Sample_Name == "Non-IBC PBMC" ~ 0,
+                             Sample_Name == "Healthy PBMC" ~ 0))
+
+# TRBJ1-1
+TRBJ1_1_vsAll_meannormalizedData = IBC_vs_all %>% 
+  filter(`crRNA Target` == "TRBJ1-1") %>% 
+  ggplot(aes(d = Disease, m = `Mean Fluorescence Recovery (ΔF%)`)) +
+  geom_roc(n.cuts = 15)+#, labelround = 2
+  facet_wrap(~ Min)
+
+calc_auc(TRBJ1_1_vsAll_meannormalizedData)
+
+# TRBJ1-2
+TRBJ1_2_vsAll_meannormalizedData = IBC_vs_all %>% 
+  filter(`crRNA Target` == "TRBJ1-2") %>% 
+  ggplot(aes(d = Disease, m = `Mean Fluorescence Recovery (ΔF%)`)) +
+  geom_roc(n.cuts = 15)+#, labelround = 2
+  facet_wrap(~ Min)
+
+calc_auc(TRBJ1_2_vsAll_meannormalizedData)
+
+# TRBJ1-6 AUC
+TRBJ1_6_vsAll_meannormalizedData = IBC_vs_all %>% 
+  filter(`crRNA Target` == "TRBJ1-6") %>% 
+  ggplot(aes(d = Disease, m = `Mean Fluorescence Recovery (ΔF%)`)) +
+  geom_roc(n.cuts = 15)+#, labelround = 2
+  facet_wrap(~ Min)
+
+calc_auc(TRBJ1_6_vsAll_meannormalizedData)
+
+# prep for Figure S6A
+TRBJ1_1_AUC_vsAll = calc_auc(TRBJ1_1_vsAll_meannormalizedData) %>% 
+  mutate(Target = "TRBJ1-1") %>% 
+  select(Target, Min, AUC)
+
+TRBJ1_2_AUC_vsAll = calc_auc(TRBJ1_2_vsAll_meannormalizedData) %>% 
+  mutate(Target = "TRBJ1-2") %>% 
+  select(Target, Min, AUC)
+
+TRBJ1_6_AUC_vsAll = calc_auc(TRBJ1_6_vsAll_meannormalizedData) %>% 
+  mutate(Target = "TRBJ1-6") %>% 
+  select(Target, Min, AUC)
+
+AUC_vsAll = TRBJ1_1_AUC_vsAll %>% 
+  rbind(TRBJ1_2_AUC_vsAll) %>% 
+  rbind(TRBJ1_6_AUC_vsAll)
+
+AUC_vsAll$Target = factor(AUC_vsAll$Target, levels = c("TRBJ1-1","TRBJ1-2","TRBJ1-6"))
+
+# Figure S6A
+AUC_vsAll%>% 
+  filter(Target %in% c("TRBJ1-1","TRBJ1-2") & Min < 65 | Target %in% c("TRBJ1-6")) %>%
+  ggplot(aes(x = Min, y = AUC))+
+  geom_point(shape = 1)+
+  ylim(0,1)+
+  theme_bw()+
+  scale_x_continuous(
+  breaks = function(x) {
+    if (max(x) <= 65) c(0, 20, 40, 60)
+    else c(0, 60, 120, 180)})+ # added with function from chatgpt
+  labs(title = "IBC PBMC vs combined Healthy and non-IBC")+
+  facet_wrap(.~ Target, scales = "free_x", nrow = 1)
+
+```
+## Figure 4C- ROC for IBC vs combined Healthy and Non-IBC
+```{r}
+Min60vsAll_meannormalizedData = IBC_vs_all %>% 
+  filter(Min == 60) %>% 
+  ggplot(aes(d = Disease, m = `Mean Fluorescence Recovery (ΔF%)`, color = `crRNA Target`)) +
+  geom_roc(n.cuts = 0)+
+  style_roc()+
+  scale_color_manual(values = c("purple","darkorange","darkred"))
+
+TRBJ1_1_Min60_vsAll_meannormalizedData = IBC_vs_all %>% 
+  filter(`crRNA Target` == "TRBJ1-1" & Min == "60") %>% 
+  ggplot(aes(d = Disease, m = `Mean Fluorescence Recovery (ΔF%)`)) +
+  geom_roc(n.cuts = 0)
+
+TRBJ1_2_Min60_vsAll_meannormalizedData = IBC_vs_all %>% 
+  filter(`crRNA Target` == "TRBJ1-2" & Min == "60") %>% 
+  ggplot(aes(d = Disease, m = `Mean Fluorescence Recovery (ΔF%)`)) +
+  geom_roc(n.cuts = 0)
+
+TRBJ1_6_Min60_vsAll_meannormalizedData = IBC_vs_all %>% 
+  filter(`crRNA Target` == "TRBJ1-6" & Min == "60") %>% 
+  ggplot(aes(d = Disease, m = `Mean Fluorescence Recovery (ΔF%)`)) +
+  geom_roc(n.cuts = 0)
+
+# Figure 4C
+Min60vsAll_meannormalizedData+
+  style_roc()+
+  annotate("text", x = .25, y = .65, color = "purple",
+            label = paste("TRBJ1-1 AUC =", round(calc_auc(TRBJ1_1_Min60_vsAll_meannormalizedData)$AUC, 2)))+ # 0.94
+  annotate("text", x = .25, y = .7, color = "darkorange",
+           label = paste("TRBJ1-2 AUC =", round(calc_auc(TRBJ1_2_Min60_vsAll_meannormalizedData)$AUC, 2)))+ # 0.95
+  annotate("text", x = .25, y = .75, color = "darkred",
+            label = paste("TRBJ1-6 AUC =", round(calc_auc(TRBJ1_6_Min60_vsAll_meannormalizedData)$AUC, 2)))+ # 0.98
+  labs(title = "IBC PBMC vs combined Healthy and non-IBC at 60 min")+
+  theme(legend.position="top")
+
+```
+## determine AUC curves for IBC vs Healthy- Figure S6B
+```{r}
+# TRBJ1-1
+TRBJ1_1_vsHealthy_meannormalizedData = IBC_vs_all %>% 
+  filter(`crRNA Target` == "TRBJ1-1" & Sample_Name != "Non-IBC PBMC") %>% 
+  ggplot(aes(d = Disease, m = `Mean Fluorescence Recovery (ΔF%)`)) +
+  geom_roc(n.cuts = 15)+#, labelround = 2
+  facet_wrap(~ Min)
+
+calc_auc(TRBJ1_1_vsHealthy_meannormalizedData)
+
+# TRBJ1-2
+TRBJ1_2_vsHealthy_meannormalizedData = IBC_vs_all %>% 
+  filter(`crRNA Target` == "TRBJ1-2" & Sample_Name != "Non-IBC PBMC") %>% 
+  ggplot(aes(d = Disease, m = `Mean Fluorescence Recovery (ΔF%)`)) +
+  geom_roc(n.cuts = 15)+#, labelround = 2
+  facet_wrap(~ Min)
+
+calc_auc(TRBJ1_2_vsHealthy_meannormalizedData)
+
+# TRBJ1-6 AUC
+TRBJ1_6_vsHealthy_meannormalizedData = IBC_vs_all %>% 
+  filter(`crRNA Target` == "TRBJ1-6" & Sample_Name != "Non-IBC PBMC") %>% 
+  ggplot(aes(d = Disease, m = `Mean Fluorescence Recovery (ΔF%)`)) +
+  geom_roc(n.cuts = 15)+#, labelround = 2
+  facet_wrap(~ Min)
+
+calc_auc(TRBJ1_6_vsHealthy_meannormalizedData)
+
+
+# prep for Figure S6B
+TRBJ1_1_AUC_vsHealthy = calc_auc(TRBJ1_1_vsHealthy_meannormalizedData) %>% 
+  mutate(Target = "TRBJ1-1") %>% 
+  select(Target, Min, AUC)
+
+TRBJ1_2_AUC_vsHealthy = calc_auc(TRBJ1_2_vsHealthy_meannormalizedData) %>% 
+  mutate(Target = "TRBJ1-2") %>% 
+  select(Target, Min, AUC)
+
+TRBJ1_6_AUC_vsHealthy = calc_auc(TRBJ1_6_vsHealthy_meannormalizedData) %>% 
+  mutate(Target = "TRBJ1-6") %>% 
+  select(Target, Min, AUC)
+
+AUC_vsHealthy = TRBJ1_1_AUC_vsHealthy %>% 
+  rbind(TRBJ1_2_AUC_vsHealthy) %>% 
+  rbind(TRBJ1_6_AUC_vsHealthy)
+
+AUC_vsHealthy$Target = factor(AUC_vsHealthy$Target, levels = c("TRBJ1-1","TRBJ1-2","TRBJ1-6"))
+
+# Figure S6B
+AUC_vsHealthy%>% 
+  filter(Target %in% c("TRBJ1-1","TRBJ1-2") & Min < 65 | Target %in% c("TRBJ1-6")) %>%
+  ggplot(aes(x = Min, y = AUC))+
+  geom_point(shape = 1)+
+  ylim(0,1)+
+  scale_x_continuous(
+  breaks = function(x) {
+    if (max(x) <= 65) c(0, 20, 40, 60)
+    else c(0, 60, 120, 180)})+ # added with function from chatgpt
+  theme_bw()+
+  labs(title = "IBC PBMC vs Healthy")+
+  facet_wrap(.~ Target, scales = "free_x", nrow = 1)
+
+```
+
+## Figure 4C- ROC for ROC for IBC vs Healthy
+```{r}
+Min60_vsHealthy_meannormalizedData = IBC_vs_all %>% 
+  filter(Min == 60 & Sample_Name != "Non-IBC PBMC") %>%
+  ggplot(aes(d = Disease, m = `Mean Fluorescence Recovery (ΔF%)`, color = `crRNA Target`)) +
+  geom_roc(n.cuts = 0)+
+  style_roc()+
+  scale_color_manual(values = c("purple","darkorange","darkred"))
+
+TRBJ1_1_Min60_vsHealthy_meannormalizedData = IBC_vs_all %>% 
+  filter(`crRNA Target` == "TRBJ1-1" & Min == "60" & Sample_Name != "Non-IBC PBMC") %>% 
+  ggplot(aes(d = Disease, m = `Mean Fluorescence Recovery (ΔF%)`)) +
+  geom_roc(n.cuts = 0)
+
+TRBJ1_2_Min60_vsHealthy_meannormalizedData = IBC_vs_all %>% 
+  filter(`crRNA Target` == "TRBJ1-2" & Min == "60" & Sample_Name != "Non-IBC PBMC") %>% 
+  ggplot(aes(d = Disease, m = `Mean Fluorescence Recovery (ΔF%)`)) +
+  geom_roc(n.cuts = 0)
+
+TRBJ1_6_Min60_vsHealthy_meannormalizedData = IBC_vs_all %>% 
+  filter(`crRNA Target` == "TRBJ1-6" & Min == "60" & Sample_Name != "Non-IBC PBMC") %>%
+  ggplot(aes(d = Disease, m = `Mean Fluorescence Recovery (ΔF%)`)) +
+  geom_roc(n.cuts = 0)
+
+# Figure 4C
+Min60_vsHealthy_meannormalizedData+
+  style_roc()+
+  annotate("text", x = .25, y = .65, color = "purple",
+            label = paste("TRBJ1-1 AUC =", round(calc_auc(TRBJ1_1_Min60_vsHealthy_meannormalizedData)$AUC, 2)))+# 0.97
+  annotate("text", x = .25, y = .7, color = "darkorange",
+           label = paste("TRBJ1-2 AUC =", round(calc_auc(TRBJ1_2_Min60_vsHealthy_meannormalizedData)$AUC, 2)))+# 0.97
+  annotate("text", x = .25, y = .75, color = "darkred",
+            label = paste("TRBJ1-6 AUC =", round(calc_auc(TRBJ1_6_Min60_vsHealthy_meannormalizedData)$AUC, 2)))+# 0.99
+  labs(title = "IBC PBMC vs Healthy at 60 min")+
+  theme(legend.position="top")
+
+```
+
+## determine AUC curves for IBC vs non-IBC- Figure S6C
+```{r}
+# TRBJ1-1
+TRBJ1_1_vsNonIBC_meannormalizedData = IBC_vs_all %>% 
+  filter(`crRNA Target` == "TRBJ1-1" & Sample_Name != "Healthy PBMC") %>% 
+  ggplot(aes(d = Disease, m = `Mean Fluorescence Recovery (ΔF%)`)) +
+  geom_roc(n.cuts = 15)+
+  facet_wrap(~ Min)
+
+calc_auc(TRBJ1_1_vsNonIBC_meannormalizedData)
+
+# TRBJ1-2
+TRBJ1_2_vsNonIBC_meannormalizedData = IBC_vs_all %>% 
+  filter(`crRNA Target` == "TRBJ1-2" & Sample_Name != "Healthy PBMC") %>% 
+  ggplot(aes(d = Disease, m = `Mean Fluorescence Recovery (ΔF%)`)) +
+  geom_roc(n.cuts = 15)+#, labelround = 2
+  facet_wrap(~ Min)
+
+calc_auc(TRBJ1_2_vsNonIBC_meannormalizedData)
+
+# TRBJ1-6 AUC
+TRBJ1_6_vsNonIBC_meannormalizedData = IBC_vs_all %>% 
+  filter(`crRNA Target` == "TRBJ1-6" & Sample_Name != "Healthy PBMC") %>% 
+  ggplot(aes(d = Disease, m = `Mean Fluorescence Recovery (ΔF%)`)) +
+  geom_roc(n.cuts = 15)+#, labelround = 2
+  facet_wrap(~ Min)
+
+calc_auc(TRBJ1_6_vsNonIBC_meannormalizedData)
+
+# prep for Figure S6C
+TRBJ1_1_AUC_vsNonIBC = calc_auc(TRBJ1_1_vsNonIBC_meannormalizedData) %>% 
+  mutate(Target = "TRBJ1-1") %>% 
+  select(Target, Min, AUC)
+
+TRBJ1_2_AUC_vsNonIBC = calc_auc(TRBJ1_2_vsNonIBC_meannormalizedData) %>% 
+  mutate(Target = "TRBJ1-2") %>% 
+  select(Target, Min, AUC)
+
+TRBJ1_6_AUC_vsNonIBC = calc_auc(TRBJ1_6_vsNonIBC_meannormalizedData) %>% 
+  mutate(Target = "TRBJ1-6") %>% 
+  select(Target, Min, AUC)
+
+AUC_vsNonIBC = TRBJ1_1_AUC_vsNonIBC %>% 
+  rbind(TRBJ1_2_AUC_vsNonIBC) %>% 
+  rbind(TRBJ1_6_AUC_vsNonIBC)
+
+AUC_vsNonIBC$Target = factor(AUC_vsNonIBC$Target, levels = c("TRBJ1-1","TRBJ1-2","TRBJ1-6"))
+
+# Figure S6C
+AUC_vsNonIBC%>% 
+  filter(Target %in% c("TRBJ1-1","TRBJ1-2") & Min < 65 | Target %in% c("TRBJ1-6")) %>%
+  ggplot(aes(x = Min, y = AUC))+
+  geom_point(shape = 1)+
+  ylim(0,1)+
+  scale_x_continuous(
+  breaks = function(x) {
+    if (max(x) <= 65) c(0, 20, 40, 60)
+    else c(0, 60, 120, 180)})+ # added with function from chatgpt
+  theme_bw()+
+  labs(title = "IBC PBMC vs non-IBC")+
+  facet_wrap(.~ Target, scales = "free_x", nrow = 1)
+
+```
+
+## Figure 4C- ROC for ROC for IBC vs Non-IBC
+```{r}
+Min60_vsNonIBC_meannormalizedData = IBC_vs_all %>% 
+  filter(Min == 60 & Sample_Name != "Healthy PBMC") %>% # fixed this line, need to rerun the figure and put in the manuscript!!!!!
+  ggplot(aes(d = Disease, m = `Mean Fluorescence Recovery (ΔF%)`, color = `crRNA Target`)) +
+  geom_roc(n.cuts = 0)+
+  style_roc()+
+  scale_color_manual(values = c("purple","darkorange","darkred"))
+
+TRBJ1_1_Min60_vsNonIBC_meannormalizedData = IBC_vs_all %>% 
+  filter(`crRNA Target` == "TRBJ1-1" & Min == "60" & Sample_Name != "Healthy PBMC") %>%
+  ggplot(aes(d = Disease, m = `Mean Fluorescence Recovery (ΔF%)`)) +
+  geom_roc(n.cuts = 0)
+
+TRBJ1_2_Min60_vsNonIBC_meannormalizedData = IBC_vs_all %>% 
+  filter(`crRNA Target` == "TRBJ1-2" & Min == "60" & Sample_Name != "Healthy PBMC") %>%
+  ggplot(aes(d = Disease, m = `Mean Fluorescence Recovery (ΔF%)`)) +
+  geom_roc(n.cuts = 0)
+
+TRBJ1_6_Min60_vsNonIBC_meannormalizedData = IBC_vs_all %>% 
+  filter(`crRNA Target` == "TRBJ1-6" & Min == "60" & Sample_Name != "Healthy PBMC") %>%
+  ggplot(aes(d = Disease, m = `Mean Fluorescence Recovery (ΔF%)`)) +
+  geom_roc(n.cuts = 0)
+
+# Figure 4C
+Min60_vsNonIBC_meannormalizedData+
+  style_roc()+
+  annotate("text", x = .25, y = .65, color = "purple",
+            label = paste("AUC =", round(calc_auc(TRBJ1_1_Min60_vsNonIBC_meannormalizedData)$AUC, 2)))+ # 0.91
+  annotate("text", x = .25, y = .7, color = "darkorange",
+           label = paste("AUC =", round(calc_auc(TRBJ1_2_Min60_vsNonIBC_meannormalizedData)$AUC, 2)))+# 0.94
+  annotate("text", x = .25, y = .75, color = "darkred",
+            label = paste("AUC =", round(calc_auc(TRBJ1_6_Min60_vsNonIBC_meannormalizedData)$AUC, 2)))+# 0.97
+  labs(title = "IBC PBMC vs Non-IBC at 60 min")+
+  theme(legend.position="top")
+
+```
+
+
+## Final scatter plots (Figure 5)
+* Extract the threshold for 10% FDR to add to the scatter plots (updated for confidence intervals on 2026-04-21)
+```{r}
+set.seed(123) # for confidence interval calculations
+
+meannormalizedData_60 = meannormalizedData %>% 
+  select(-A,-B) %>% 
+  filter(Min == 60,
+         `Reaction Conditions` == "PNK+/PolyA+/RT+") %>% 
+  pivot_wider(names_from = `crRNA Target`,values_from = `Mean Fluorescence Recovery (ΔF%)`)
+
+meannormalizedData_60_ROC = meannormalizedData %>% 
+  filter(Min == 60) %>% 
+  filter(`Sample Type`=="PBMC" & `Reaction Conditions` == "PNK+/PolyA+/RT+") %>%
+  mutate(Disease = case_when(Sample_Name == "IBC PBMC" ~ 1,
+                             Sample_Name == "Non-IBC PBMC" ~ 0,
+                             Sample_Name == "Healthy PBMC" ~ 0))
+
+# TRBJ1-1
+TRBJ1_1_vsAll_meannormalizedData_60_ROC =  meannormalizedData_60_ROC %>% 
+  filter(`crRNA Target` == "TRBJ1-1")
+
+roc_obj_1.1 <- roc(response = TRBJ1_1_vsAll_meannormalizedData_60_ROC$Disease, predictor =TRBJ1_1_vsAll_meannormalizedData_60_ROC$`Mean Fluorescence Recovery (ΔF%)`)
+
+# check AUC using pROC and compare to plotROC
+auc(roc_obj_1.1)
+# Area under the curve: 0.9354
+# same as plotROC
+
+# Extract all thresholds with corresponding FPR (1 - specificity)
+roc_data_1.1 <- data.frame(
+  threshold = roc_obj_1.1$thresholds,
+  fpr = 1 - roc_obj_1.1$specificities,
+  tpr = roc_obj_1.1$sensitivities
+)
+roc_data_1.1
+# Find threshold closest to FPR = 0.10
+target_1.1 <- roc_data_1.1[which.min(abs(roc_data_1.1$fpr - 0.10)), ]
+target_1.1 # threshold = 91.10913, fpr = 91.10913, tpr = 91.10913
+Threshold1.1 = unlist(target_1.1$threshold)
+
+# TRBJ1-2
+TRBJ1_2_vsAll_meannormalizedData_60_ROC =  meannormalizedData_60_ROC %>% 
+  filter(`crRNA Target` == "TRBJ1-2")
+
+roc_obj_1.2 <- roc(response = TRBJ1_2_vsAll_meannormalizedData_60_ROC$Disease, predictor =TRBJ1_2_vsAll_meannormalizedData_60_ROC$`Mean Fluorescence Recovery (ΔF%)`)
+
+# check AUC using pROC and compare to plotROC
+auc(roc_obj_1.2)
+# Area under the curve: 0.9513
+# same as plotROC
+
+# Extract all thresholds with corresponding FPR (1 - specificity)
+roc_data_1.2 <- data.frame(
+  threshold = roc_obj_1.2$thresholds,
+  fpr = 1 - roc_obj_1.2$specificities,
+  tpr = roc_obj_1.2$sensitivities
+)
+roc_data_1.2
+# Find threshold closest to FPR = 0.10
+target_1.2 <- roc_data_1.2[which.min(abs(roc_data_1.2$fpr - 0.10)), ]
+target_1.2 # threshold = 67.42161, fpr = 0.1016949, tpr = 0.875
+Threshold1.2 = unlist(target_1.2$threshold)
+
+# TRBJ1-6
+TRBJ1_6_vsAll_meannormalizedData_60_ROC =  meannormalizedData_60_ROC %>% 
+  filter(`crRNA Target` == "TRBJ1-6")
+
+roc_obj_1.6 <- roc(response = TRBJ1_6_vsAll_meannormalizedData_60_ROC$Disease, predictor =TRBJ1_6_vsAll_meannormalizedData_60_ROC$`Mean Fluorescence Recovery (ΔF%)`)
+
+# check AUC using pROC and compare to plotROC
+auc(roc_obj_1.6)
+# Area under the curve: 0.9767
+# same as plotROC
+
+# Extract all thresholds with corresponding FPR (1 - specificity)
+roc_data_1.6 <- data.frame(
+  threshold = roc_obj_1.6$thresholds,
+  fpr = 1 - roc_obj_1.6$specificities,
+  tpr = roc_obj_1.6$sensitivities
+)
+roc_data_1.6
+# Find threshold closest to FPR = 0.10
+target_1.6 <- roc_data_1.6[which.min(abs(roc_data_1.6$fpr - 0.10)), ]
+target_1.6 # threshold = 16.0299, fpr = 0.1016949, tpr = 0.9375
+Threshold1.6 = unlist(target_1.6$threshold)
+
+# add 10% false positive rate calculated above to dotted lines on the scatter plots
+
+# Figure 5B- scatterplot TRBJ1-6 vs TRBJ1-1
+meannormalizedData_60 %>% 
+  ggplot(aes(x = `TRBJ1-6`, y = `TRBJ1-1`, color = Sample_Name, group = `Donor ID`))+
+  geom_point(shape = 1, size = 3)+
+  labs(title = "FINAL PBMC Means", subtitle = paste("TRBJ1-6 vs TRBJ1-1 Mean Fluorescence at 60 min"))+
+  theme_bw()+
+  theme(axis.text.x=element_text(angle=90,hjust = 1))+
+  scale_color_manual(values = c("#3b3b3b","#4173C6","#FF5733"))+
+  geom_hline(yintercept = Threshold1.1, linetype = "dashed", color = "gray") +  # TRBJ1-1 is y-axis, so threshold is horizontal
+  geom_vline(xintercept = Threshold1.6, linetype = "dashed", color = "gray") +  # TRBJ1-6 is x-axis, so threshold is vertical
+  geom_text_repel(
+    data = subset(
+      meannormalizedData_60,
+      (Sample_Name %in% c("Healthy PBMC","Non-IBC PBMC") & (`TRBJ1-1` >= Threshold1.1 |`TRBJ1-6` >= Threshold1.6 ) |
+        Sample_Name == "IBC PBMC" & (`TRBJ1-6` < Threshold1.6 | `TRBJ1-1` < Threshold1.1))
+    ),
+    aes(label = `Donor ID`),
+    box.padding = 0.5,
+    segment.color = "grey50",
+    max.overlaps = Inf
+  )
+
+# Figure 5C- scatterplot TRBJ1-1 vs TRBJ1-2
+meannormalizedData_60 %>% 
+  ggplot(aes(x = `TRBJ1-1`, y = `TRBJ1-2`, color = Sample_Name, group = `Donor ID`))+
+  geom_point(shape = 1, size = 3)+
+  labs(title = "FINAL PBMC Means", subtitle = paste("TRBJ1-1 vs TRBJ1-2 Mean Fluorescence at 60 min"))+
+  theme_bw()+
+  theme(axis.text.x=element_text(angle=90,hjust = 1))+
+  scale_color_manual(values = c("#3b3b3b","#4173C6","#FF5733"))+
+  geom_hline(yintercept = Threshold1.2, linetype = "dashed", color = "gray") +  # TRBJ1-2 is y-axis, so threshold is horizontal
+  geom_vline(xintercept = Threshold1.1, linetype = "dashed", color = "gray") +  # TRBJ1-1 is x-axis, so threshold is vertical
+  geom_text_repel(
+    data = subset(
+      meannormalizedData_60,
+      (Sample_Name %in% c("Healthy PBMC","Non-IBC PBMC") & (`TRBJ1-1` >= Threshold1.1 |`TRBJ1-2` >= Threshold1.2 ) |
+        Sample_Name == "IBC PBMC" & (`TRBJ1-2` < Threshold1.2 | `TRBJ1-1` < Threshold1.1))
+    ),
+    aes(label = `Donor ID`),
+    box.padding = 0.5,
+    segment.color = "grey50",
+    max.overlaps = Inf
+  )
+
+# Figure 5D- scatterplot TRBJ1-6 vs TRBJ1-2
+meannormalizedData_60 %>% 
+  ggplot(aes(x = `TRBJ1-6`, y = `TRBJ1-2`, color = Sample_Name, group = `Donor ID`))+
+  geom_point(shape = 1, size = 3)+
+  labs(title = "FINAL PBMC Means", subtitle = paste("TRBJ1-6 vs TRBJ1-2 Mean Fluorescence at 60 min"))+
+  theme_bw()+
+  theme(axis.text.x=element_text(angle=90,hjust = 1))+
+  scale_color_manual(values = c("#3b3b3b","#4173C6","#FF5733"))+
+  geom_hline(yintercept = Threshold1.2, linetype = "dashed", color = "gray") +  # TRBJ1-2 is y-axis, so threshold is horizontal
+  geom_vline(xintercept = Threshold1.6, linetype = "dashed", color = "gray") +  # TRBJ1-6 is x-axis, so threshold is vertical
+  geom_text_repel(
+    data = subset(
+      meannormalizedData_60,
+      (Sample_Name %in% c("Healthy PBMC","Non-IBC PBMC") & (`TRBJ1-2` >= Threshold1.2 |`TRBJ1-6` >= Threshold1.6 ) |
+        Sample_Name == "IBC PBMC" & (`TRBJ1-6` < Threshold1.6 | `TRBJ1-2` < Threshold1.2))
+    ),
+    aes(label = `Donor ID`),
+    box.padding = 0.5,
+    segment.color = "grey50",
+    max.overlaps = Inf
+  )
+```
+
+## Upset plot (Figure 5A)
+```{r}
+
+meannormalizedData_60_for_upset_labeled = meannormalizedData_60 %>% 
+  mutate("Detection TRBJ1-1" = case_when(`TRBJ1-1` > Threshold1.1 ~ TRUE,
+                                       TRUE ~ FALSE),
+         "Detection TRBJ1-2" = case_when(`TRBJ1-2` > Threshold1.2 ~ TRUE,
+                                       TRUE ~ FALSE),
+         "Detection TRBJ1-6" = case_when(`TRBJ1-6` > Threshold1.6 ~ TRUE,
+                                       TRUE ~ FALSE)) %>% 
+  select(`Donor ID`, Sample_Name, `Detection TRBJ1-1`, `Detection TRBJ1-2`, `Detection TRBJ1-6`) %>% 
+  mutate(
+    "intersection" = case_when(
+      `Detection TRBJ1-1` == FALSE & `Detection TRBJ1-2` == FALSE & `Detection TRBJ1-6` == FALSE ~ "000",
+      `Detection TRBJ1-1` == TRUE & `Detection TRBJ1-2` == TRUE & `Detection TRBJ1-6` == TRUE ~ "126",
+      `Detection TRBJ1-1` == TRUE & `Detection TRBJ1-2` == FALSE & `Detection TRBJ1-6` == TRUE ~ "106",
+      `Detection TRBJ1-1` == FALSE & `Detection TRBJ1-2` == FALSE & `Detection TRBJ1-6` == TRUE ~ "006",
+      `Detection TRBJ1-1` == TRUE & `Detection TRBJ1-2` == TRUE & `Detection TRBJ1-6` == FALSE ~ "120",
+      `Detection TRBJ1-1` == FALSE & `Detection TRBJ1-2` == TRUE & `Detection TRBJ1-6` == TRUE ~ "026",
+      `Detection TRBJ1-1` == FALSE & `Detection TRBJ1-2` == TRUE & `Detection TRBJ1-6` == FALSE ~ "020",
+      `Detection TRBJ1-1` == TRUE & `Detection TRBJ1-2` == FALSE & `Detection TRBJ1-6` == FALSE ~ "100",
+      TRUE ~ "other"
+    )) %>% 
+  mutate(for_graph = case_when(
+    intersection == "126" & Sample_Name %in% c("Healthy PBMC", "Non-IBC PBMC") ~ `Donor ID`,
+    !(intersection %in% c("000","126")) ~ `Donor ID`
+   ))
+
+# to get the count for each sample type in each intersection category
+meannormalizedData_60_for_upset_labeled %>% 
+  group_by(Sample_Name,intersection) %>% 
+  summarize(count = n())
+
+
+# for some reason I needed to list the intersect as 6,2,1 in order for the resulting graph to have 1,2,6...
+## here's the graph with the samples labeled, they are overlapped, but I can move them in illustrator
+## for some reason the labels are duplicated when I export, but I have to manually adjust them anyway
+upset(meannormalizedData_60_for_upset_labeled,
+      intersect = c("Detection TRBJ1-6","Detection TRBJ1-2","Detection TRBJ1-1"),
+      sort_sets = FALSE,
+      base_annotations = list(
+      'Intersection size' = intersection_size(aes(fill = Sample_Name),) +
+  scale_fill_manual(values = c(
+    "Healthy PBMC" = "#3b3b3b",
+    "Non-IBC PBMC" = "#4173C6",
+    "IBC PBMC" = "#FF5733"))
+    ),
+  annotations = list(
+    "Samples" = ggplot(mapping = aes(x = intersection, y= 0, label = for_graph)) +
+      geom_text(stat = "identity", size = 2)
+  )
+  )
+```
