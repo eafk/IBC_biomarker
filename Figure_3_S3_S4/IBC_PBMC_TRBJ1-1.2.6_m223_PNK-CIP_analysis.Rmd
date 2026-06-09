@@ -1,0 +1,134 @@
+---
+title: "IBC_PBMC_TRBJ1-1.2.6_m223_PNK-CIP_analysis.Rmd"
+date: "2026-06-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+## Calculate the Mean normalized fluorescence from the replicates```{r, warning=FALSE}
+```{r}
+rawData = read_delim(file = "optimization_CRISPR_raw_data.tsv", delim = "\t")
+
+# make sure to factor all the levels in the order I want them displayed for graphing and for consistency for class types
+rawData$`Reaction Conditions` = factor(rawData$`Reaction Conditions`, levels = c("PNK+/PolyA+/RT+","PNK-","CIP+/PolyA+/RT+","CIP-","PolyA-","RT-","Max Fluorescence in PCR buffer"))
+rawData$`Reaction Variable` = factor(rawData$`Reaction Variable`, levels = c("Phosphatase+/PolyA+/RT+","Phosphatase-","PolyA-","RT-","Max Fluorescence in PCR buffer"))
+rawData$Replicate <- as.factor(rawData$Replicate)
+rawData$`CRISPR Date` <- as.factor(rawData$`CRISPR Date`)
+rawData$`crRNA Target` = factor(rawData$`crRNA Target`, levels = c("TRBJ1-1","TRBJ1-2","TRBJ1-6","mir-223-3p"))
+rawData$`Reaction Group` = factor(rawData$`Reaction Group`, levels = c("PNK","CIP","Control","Control-PNK","Control-CIP"))
+rawData$Sample_Name = factor(rawData$Sample_Name, levels = c("Healthy PBMC","Non-IBC PBMC","IBC PBMC"))
+
+baselineData = rawData %>% 
+  filter(Min <=0) %>% 
+  select(`CRISPR ID`, Min, Fluorescence) %>% 
+  pivot_wider(values_from = Fluorescence, names_from = Min) %>% 
+  rowwise() %>%
+  mutate(Baseline_mean = mean(c_across(`-10`:`0`))) %>% 
+  select(`CRISPR ID`, Baseline_mean)
+
+# CIP and PNK are on separate plates with both targets, TRBJ1-6 and mir223
+Fmax_2024_10_14_IBC_PBMC_TRBJ1_6_mir223_PNK_plate1 = baselineData %>% 
+  filter(`CRISPR ID` %in% c("B12_Fmax_2024-10-14")) %>% ## A12 and B12 are replicates, B12 is higher
+  pull(Baseline_mean)
+
+Fmax_2024_10_21_IBC_PBMC_TRBJ1_6_mir223_CIP_plate1 = baselineData %>% 
+  filter(`CRISPR ID` %in% c("B12_Fmax_2024-10-21")) %>% ## A12 and B12 are replicates, B12 is higher
+  pull(Baseline_mean)
+
+Fmax_2024_11_15_IBC_PBMC_TRBJ1_6_mir223_PNK_plate2 = baselineData %>% 
+  filter(`CRISPR ID` %in% c("G12_Fmax_2024-11-15")) %>% ## F12 and G12 are replicates, G12 is higher
+  pull(Baseline_mean)
+
+Fmax_2024_11_25_IBC_PBMC_TRBJ1_6_mir223_CIP_plate2 = baselineData %>% 
+  filter(`CRISPR ID` %in% c("G12_Fmax_2024-11-25")) %>% ## F12 and G12 are replicates, G12 is higher
+  pull(Baseline_mean)
+# CIP and PNK are on same plates for the rest of the targets, with each plate only having one target, TRBJ1-1 and TRBJ1-2
+Fmax_2025_02_10_IBC_PBMC_TRBJ1_2_PNK_CIP_plate1 = baselineData %>% 
+  filter(`CRISPR ID` %in% c("G12_Fmax_2025-02-10")) %>% ## F12 and G12 are replicates, G12 is higher
+  pull(Baseline_mean)
+
+Fmax_2025_07_14_IBC_PBMC_TRBJ1_2_PNK_CIP_plate2 = baselineData %>% 
+  filter(`CRISPR ID` %in% c("G12_Fmax_2025-07-14")) %>% ## G12 and H12 are replicates, G12 is higher
+  pull(Baseline_mean)
+
+Fmax_2025_07_16_IBC_PBMC_TRBJ1_1_PNK_CIP_plate2 = baselineData %>% 
+  filter(`CRISPR ID` %in% c("G12_Fmax_2025-07-16")) %>% ## G12 and H12 are replicates, G12 is higher
+  pull(Baseline_mean)
+
+Fmax_2026_04_17_IBC_PBMC_TRBJ1_1_PNK_CIP_plate3 = baselineData %>% 
+  filter(`CRISPR ID` %in% c("G12_Fmax_2026-04-17")) %>% ## G12 and H12 are replicates, G12 is higher
+  pull(Baseline_mean)
+
+# unicode for delta in R is \u0394, but it turned out I could just insert Δ directly, though this symbol never exports to pdf
+normalizedData = rawData %>% 
+  left_join(baselineData) %>% 
+  mutate("Fluorescence Recovery (ΔF%)" = case_when(`CRISPR Date` == "2024-10-14" ~ ((Fluorescence-Baseline_mean)/(Fmax_2024_10_14_IBC_PBMC_TRBJ1_6_mir223_PNK_plate1-Baseline_mean))*100,
+                                                    `CRISPR Date` == "2024-10-21" ~ ((Fluorescence-Baseline_mean)/(Fmax_2024_10_21_IBC_PBMC_TRBJ1_6_mir223_CIP_plate1-Baseline_mean))*100,
+                                                    `CRISPR Date` == "2024-11-15" ~ ((Fluorescence-Baseline_mean)/(Fmax_2024_11_15_IBC_PBMC_TRBJ1_6_mir223_PNK_plate2-Baseline_mean))*100,
+                                                    `CRISPR Date` == "2024-11-25" ~ ((Fluorescence-Baseline_mean)/(Fmax_2024_11_25_IBC_PBMC_TRBJ1_6_mir223_CIP_plate2-Baseline_mean))*100,
+                                                   `CRISPR Date` == "2025-02-10" ~ ((Fluorescence-Baseline_mean)/(Fmax_2025_02_10_IBC_PBMC_TRBJ1_2_PNK_CIP_plate1-Baseline_mean))*100,
+                                                   `CRISPR Date` == "2025-07-14" ~ ((Fluorescence-Baseline_mean)/(Fmax_2025_07_14_IBC_PBMC_TRBJ1_2_PNK_CIP_plate2-Baseline_mean))*100,
+                                                   `CRISPR Date` == "2025-07-16" ~ ((Fluorescence-Baseline_mean)/(Fmax_2025_07_16_IBC_PBMC_TRBJ1_1_PNK_CIP_plate2-Baseline_mean))*100,
+                                                   `CRISPR Date` == "2026-04-17" ~ ((Fluorescence-Baseline_mean)/(Fmax_2026_04_17_IBC_PBMC_TRBJ1_1_PNK_CIP_plate3-Baseline_mean))*100))
+
+
+meannormalizedData = normalizedData %>%
+  filter(`Sample Type` == "PBMC" & `Reaction Group` %in% c("PNK","CIP")) %>%
+  select(Min, Sample_Name,Sample_Number,`Sample Type`,Replicate,`Reaction Conditions`,`crRNA Target`,`Fluorescence Recovery (ΔF%)`,`Reaction Group`,`Reaction Variable`) %>% 
+  pivot_wider(values_from = `Fluorescence Recovery (ΔF%)`,names_from = Replicate) %>% 
+  mutate("Mean Fluorescence Recovery (ΔF%)"= rowMeans(across(`1`:`2`))) %>% 
+  # select(-`1`,-`2`) %>%  # keep for the table for reference
+  mutate(Sample_ID = paste(Sample_Name,"_",Sample_Number,"_",`Reaction Conditions`,"_",`Reaction Group`,"_",`crRNA Target`))
+
+write_delim(meannormalizedData, file = "optimization_CRISPR_mean_normalized_data.tsv", delim = "\t")
+```
+
+## Figures
+```{r}
+# Figure 3A
+meannormalizedData %>% 
+  filter(`crRNA Target` %in% c("TRBJ1-6","mir-223-3p")) %>% 
+  filter(Min >= 0) %>%
+  ggplot(aes(x = Min, y = `Mean Fluorescence Recovery (ΔF%)`, group = Sample_ID, color = Sample_Name))+
+  geom_line()+
+  facet_grid(`crRNA Target`~`Reaction Group`~`Reaction Variable`)+
+  theme_bw()+
+  scale_color_manual(values = c("#3b3b3b","#4173C6","#FF5733"))+
+  scale_x_continuous(breaks = c(0, 60, 120, 180))
+
+# Figure 3B
+meannormalizedData %>%
+  filter(`crRNA Target` %in% c("TRBJ1-6","mir-223-3p") & Min == 180) %>%
+  filter(`Reaction Variable` %in% c("Phosphatase+/PolyA+/RT+","Phosphatase-")) %>% 
+  ggplot(aes(x = Sample_Name, y = `Mean Fluorescence Recovery (ΔF%)`, color = `Reaction Variable`))+
+  geom_boxplot()+
+  geom_point(position = position_dodge(width = 0.75), size = 3, shape = 1)+
+  theme_bw()+
+  facet_grid(`crRNA Target`~`Reaction Group`)+
+  scale_color_manual(values = c("#FF7F50","darkgrey"))
+
+# Figure S3
+meannormalizedData %>%
+  filter(`crRNA Target` %in% c("TRBJ1-1","TRBJ1-2") & Min == 60 | `crRNA Target` %in% c("TRBJ1-6","mir-223-3p") & Min == 180) %>%
+  ggplot(aes(x = Sample_Name, y = `Mean Fluorescence Recovery (ΔF%)`, color = `Reaction Variable`, label=Sample_Number))+
+  geom_boxplot()+
+  geom_point(position = position_dodge(width = 0.75), size = 3, shape = 1)+
+  facet_grid(`crRNA Target`~`Reaction Group`)+
+  theme_bw()+
+  scale_color_manual(values = c("#FF5733","#3b3b3b","#4173C6","#81007F"))
+
+# Figure S4
+meannormalizedData %>% 
+  filter(`crRNA Target` %in% c("TRBJ1-1","TRBJ1-2")) %>% 
+  filter(Min >= 0 & Min < 65) %>%
+  ggplot(aes(x = Min, y = `Mean Fluorescence Recovery (ΔF%)`, group = Sample_ID, color = Sample_Name))+
+  geom_line()+
+  facet_grid(`crRNA Target`~`Reaction Group`~`Reaction Variable`)+
+  theme_bw()+
+  scale_color_manual(values = c("#3b3b3b","#4173C6","#FF5733"))+
+  scale_x_continuous(breaks = c(0, 20, 40, 60))
+```
