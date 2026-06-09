@@ -1,0 +1,321 @@
+---
+title: "CRISPR_model.Rmd"
+date: "2026-06-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readr)
+library(ComplexUpset)
+library(ggrepel)
+library(FSA)
+library(caret)
+library(car)
+library(dplyr)
+library(pROC)
+library(tibble)
+```
+
+## Model (used chatgpt)
+## this one combines the Healthy and non-IBC into outcome other for combined comparison to IBC
+```{r}
+Final_mean_PBMC_CRISPR_60 = read_delim(file = "Final_mean_PBMC_CRISPR_60min.tsv", delim = "\t")
+
+Final_mean_PBMC_CRISPR_60_wide <- Final_mean_PBMC_CRISPR_60 %>%
+  pivot_wider(
+    names_from = `crRNA Target`,
+    values_from = `Mean Fluorescence Recovery (ΔF%)`
+  ) %>% 
+  mutate(outcome = ifelse(`Sample Type` == "IBC", "IBC", "Other"),
+         outcome = factor(outcome, levels = c("Other", "IBC")))
+
+Final_mean_PBMC_CRISPR_60_wide$`Sample Type` <- factor(Final_mean_PBMC_CRISPR_60_wide$`Sample Type`,
+                               levels = c("Healthy", "non-IBC", "IBC"))
+```
+
+## PCA (Figure 6A)
+```{r}
+# coded with chatgpt
+# categorize the false positives false negatives based on Upset plot in Fig 
+labels = c("H04","N39","N25","I14","I23","I25","N11","N16","I02","H23","N17","I32","N23","I11","N19")
+
+pca_data <- Final_mean_PBMC_CRISPR_60_wide %>%
+  select(`TRBJ1-1`,`TRBJ1-2`,`TRBJ1-6`) %>%
+  scale()
+
+pca <- prcomp(pca_data, scale. = TRUE)
+
+percent_var <- (pca$sdev^2 / sum(pca$sdev^2)) * 100
+
+pc1 <- round(percent_var[1], 1)
+pc2 <- round(percent_var[2], 1)
+
+xlab <- paste0("PC1 (", pc1, "%)")
+ylab <- paste0("PC2 (", pc2, "%)")
+
+pca_df <- as.data.frame(pca$x) %>%
+  mutate(`Sample Type` = Final_mean_PBMC_CRISPR_60_wide$`Sample Type`,
+         `Donor ID` = Final_mean_PBMC_CRISPR_60_wide$`Donor ID`,
+         to_label = case_when(`Donor ID` %in% labels ~ `Donor ID`,
+                               TRUE ~ NA))
+
+ggplot(pca_df, aes(PC1, PC2, color = `Sample Type`, label = to_label)) +
+  geom_point(size = 3, alpha = 0.75) +
+  stat_ellipse() +
+  theme_minimal()+
+  scale_color_manual(values = c(
+    "Healthy" = "#3b3b3b",
+    "non-IBC" = "#4173C6",
+    "IBC" = "#FF5733"))+
+  theme_bw()+
+  geom_text_repel(aes(label = to_label),
+                  box.padding = 0.5,
+    segment.color = "grey50",
+    max.overlaps = Inf
+  )+
+  xlab(paste0("PC1 (", round(percent_var[1], 1), "%)")) +
+  ylab(paste0("PC2 (", round(percent_var[2], 1), "%)"))
+
+```
+
+## create a weighted combination of biomarkers based on the combined model (Figure 6B)
+```{r}
+set.seed(123)
+Final_mean_PBMC_CRISPR_60_wide$outcome <- factor(
+  Final_mean_PBMC_CRISPR_60_wide$outcome,
+  levels = c("Other", "IBC")
+)
+model_combined <- glm(outcome ~ `TRBJ1-1` + `TRBJ1-2` + `TRBJ1-6`,
+                      data = Final_mean_PBMC_CRISPR_60_wide,
+                      family = binomial)
+
+summary(model_combined)
+
+Final_mean_PBMC_CRISPR_60_wide$biomarker_score <- predict(model_combined, type = "link")
+
+ggplot(Final_mean_PBMC_CRISPR_60_wide, aes(x = `Sample Type`, y = biomarker_score, fill = `Sample Type`)) +
+  geom_violin(alpha = 0.5, position = "identity")+
+  geom_dotplot(binaxis='y', stackdir='center', dotsize=0.5)+
+  scale_fill_manual(values = c(
+    "Healthy" = "#3b3b3b",
+    "non-IBC" = "#4173C6",
+    "IBC" = "#FF5733"))+
+  ylab("Combined Biomarker Score")+
+  theme_bw()
+
+```
+
+## stats for combined biomarker score: IBC vs Healhty and non-IBC significant
+```{r}
+
+# the data to use
+Final_mean_PBMC_CRISPR_60_wide
+
+# non-parametric test is needed since data aren't normal or equal variance, shows the same significant result
+# part of base installation "stats" package
+kruskal.test(biomarker_score ~ `Sample Type`, data = Final_mean_PBMC_CRISPR_60_wide)
+
+# a follow up to Kruskal-Wallis test to get individual comparisons
+# Perform Dunn's test
+dunnTest(biomarker_score ~ `Sample Type`, data = Final_mean_PBMC_CRISPR_60_wide, method = "holm") # Holm is a good standard choice
+```
+
+## cross-validation
+```{r}
+# all the variables are below 5, suggesting the biomarkers aren't colinear
+vif(model_combined)
+
+# `TRBJ1-1` `TRBJ1-2` `TRBJ1-6` 
+ # 1.748886  2.127203  1.732564 
+
+```
+
+```{r}
+set.seed(123)
+
+Final_mean_PBMC_CRISPR_60_wide$outcome <- factor(
+  Final_mean_PBMC_CRISPR_60_wide$outcome,
+  levels = c("Other", "IBC")
+)
+
+train_control <- trainControl(
+  method = "repeatedcv",
+  number = 5,
+  repeats = 10,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary,
+  savePredictions = "final"
+)
+
+cv_model <- train(
+  outcome ~ `TRBJ1-1` + `TRBJ1-2` + `TRBJ1-6`,
+  data = Final_mean_PBMC_CRISPR_60_wide,
+  method = "glm",
+  family = "binomial",
+  metric = "ROC",
+  trControl = train_control
+)
+
+cv_model
+  # ROC       Sens       Spec     
+  # 0.963254  0.9469697  0.8485714
+
+```
+
+## ROC characteristics for the cross-validated model with composite biomarker (Table 3)
+```{r}
+
+
+set.seed(123)
+
+# =========================
+# 1. Mean CV metrics
+#    (caret default threshold = 0.5)
+# =========================
+
+cv_summary <- cv_model$resample %>%
+  summarise(
+    mean_auc  = mean(ROC),
+    sd_auc    = sd(ROC),
+
+    mean_sens = mean(Sens),
+    sd_sens   = sd(Sens),
+
+    mean_spec = mean(Spec),
+    sd_spec   = sd(Spec),
+
+    mean_fpr  = mean(1 - Spec),
+    sd_fpr    = sd(1 - Spec)
+  )
+
+# =========================
+# 2. Aggregate repeated CV predictions
+# =========================
+
+pooled_preds <- cv_model$pred %>%
+  group_by(rowIndex) %>%
+  summarise(
+    obs = dplyr::first(obs),
+    prob_IBC = mean(IBC)
+  ) %>%
+  ungroup()
+
+# Ensure factor ordering
+pooled_preds$obs <- factor(
+  pooled_preds$obs,
+  levels = c("Other", "IBC")
+)
+
+# =========================
+# 3. ROC curve from pooled predictions
+# =========================
+
+roc_obj <- roc(
+  response = pooled_preds$obs,
+  predictor = pooled_preds$prob_IBC,
+  levels = c("Other", "IBC"),
+  direction = "<",
+  quiet = TRUE
+)
+
+# =========================
+# 4. AUC + bootstrap CI
+# =========================
+
+auc_val <- as.numeric(auc(roc_obj))
+
+auc_ci <- ci.auc(
+  roc_obj,
+  method = "bootstrap",
+  boot.n = 5000
+)
+
+# =========================
+# 5. Select threshold
+#    Closest to 10% FPR
+# =========================
+
+roc_df <- coords(
+  roc_obj,
+  x = "all",
+  ret = c("threshold", "sensitivity", "specificity"),
+  transpose = FALSE
+)
+
+roc_df <- roc_df %>%
+  mutate(
+    fpr = 1 - specificity
+  )
+
+best_row <- roc_df %>%
+  dplyr::slice(which.min(abs(fpr - 0.10)))
+
+threshold_prob <- best_row$threshold
+
+sensitivity <- best_row$sensitivity
+specificity <- best_row$specificity
+fpr         <- best_row$fpr
+
+# =========================
+# 6. Publication-style table
+# =========================
+
+performance_table <- tibble(
+  Metric = c(
+    "Cross-validated AUC ROC",
+    "Mean CV sensitivity (threshold = 0.5)",
+    "Mean CV specificity (threshold = 0.5)",
+    "Mean CV false positive rate (threshold = 0.5)",
+    "Threshold selection criterion",
+    "Selected probability threshold",
+    "Sensitivity at selected threshold",
+    "Specificity at selected threshold",
+    "False positive rate at selected threshold"
+  ),
+
+  Value = c(
+
+    sprintf(
+      "%.3f (95%% CI %.3f–%.3f)",
+      auc_val,
+      auc_ci[1],
+      auc_ci[3]
+    ),
+
+    sprintf(
+      "%.1f%% ± %.1f%%",
+      cv_summary$mean_sens * 100,
+      cv_summary$sd_sens * 100
+    ),
+
+    sprintf(
+      "%.1f%% ± %.1f%%",
+      cv_summary$mean_spec * 100,
+      cv_summary$sd_spec * 100
+    ),
+
+    sprintf(
+      "%.1f%% ± %.1f%%",
+      cv_summary$mean_fpr * 100,
+      cv_summary$sd_fpr * 100
+    ),
+
+    "Closest to 10% FPR",
+
+    sprintf("%.3f", threshold_prob),
+
+    sprintf("%.1f%%", sensitivity * 100),
+
+    sprintf("%.1f%%", specificity * 100),
+
+    sprintf("%.1f%%", fpr * 100)
+  )
+)
+
+performance_table
+```
+
+
+
