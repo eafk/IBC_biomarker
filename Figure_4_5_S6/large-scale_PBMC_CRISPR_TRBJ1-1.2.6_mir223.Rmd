@@ -134,7 +134,6 @@ meannormalizedData %>%
   geom_violin(aes(alpha = 0.5))+
   geom_dotplot(binaxis='y', stackdir='center', dotsize=0.5)+
   facet_wrap(.~`crRNA Target`, scales = "free_y", nrow = 1)+
-  labs(title = graphName, subtitle = paste("Fluorescence at 60 min"))+
   theme(axis.text.x=element_text(angle=90,hjust = 1))+
   theme_bw()+
   scale_fill_manual(values = c("#3b3b3b","#4173C6","#FF5733"))+
@@ -720,7 +719,7 @@ upset(meannormalizedData_60_for_upset_labeled,
       intersect = c("Detection TRBJ1-6","Detection TRBJ1-2","Detection TRBJ1-1"),
       sort_sets = FALSE,
       base_annotations = list(
-      'Intersection size' = intersection_size(aes(fill = Sample_Name),) +
+      'Intersection size' = intersection_size(aes(fill = Sample_Name)) +
   scale_fill_manual(values = c(
     "Healthy PBMC" = "#3b3b3b",
     "Non-IBC PBMC" = "#4173C6",
