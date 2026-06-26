@@ -1,6 +1,6 @@
 ---
 title: "TGIRTseq_IBC_TRBJ1-1.2.6_Plasma_PBMC_PBMC-filtering.Rmd"
-date: "2026-06-09"
+date: "2026-06-26"
 output: html_document
 ---
 
@@ -33,8 +33,7 @@ done
 
 ## Make the counts file from the bedcoverage file
 ```{r, eval = FALSE}
-metadata_Wylie = read.delim(file = "IBC_DESeq2.metadata.tsv", sep = '\t') %>% 
-  filter(Sample.Type == "PBMC")
+metadata_Wylie = read.delim(file = "IBC_DESeq2.metadata.tsv", sep = '\t')
 
 IBC_BC_Files = list.files(path = "Filtered_30nt_or_less_Read1/bedtools_coverage/", pattern = ".bedcoverage", full.names = TRUE)
 
@@ -169,11 +168,11 @@ Plasma_DESeq2_IBC_Gen = read_delim(file = "IBC_Plasma_DESeq2_normalized_counts.t
 PBMC30nt_DESeq2_IBC_Gen = read_delim(file = "IBC_PBMC_filtered30nt_DESeq2_normalized_counts.tsv", delim = "\t") %>% 
   select(-...1) %>% # get rid of rownames
   pivot_longer(cols = PBMCI01:PBMCH13, names_to = "DESeq2_sample_name", values_to = "DESeq2-normalized counts") %>% 
-  left_join(DESeq2_IBC_metadata) %>% 
+  left_join(metadata_Wylie) %>% 
   mutate("Read Lengths" = "<=30 nt filtered read lengths")
 
 combo_DESeq2_IBC_Gen = rbind(PBMC_DESeq2_IBC_Gen, Plasma_DESeq2_IBC_Gen) %>%   
-  left_join(DESeq2_IBC_metadata) %>% 
+  left_join(metadata_Wylie) %>% 
   mutate("Read Lengths" = "All read lengths") %>% 
   select(-Type)
 
@@ -195,12 +194,12 @@ combo_DESeq2_IBC_Gen2$Disease.category = factor(combo_DESeq2_IBC_Gen2$Disease.ca
 ```{r}
 combo_DESeq2_IBC_Gen2 %>% 
   ggplot(aes(x = Disease.category, y = `DESeq2-normalized counts`, fill = Disease.category))+
-  geom_violin(aes(alpha = 0.5))+
+  geom_violin(aes(alpha = 0.5), draw_quantiles = c(0.25, 0.5, 0.75))+
   geom_dotplot(binaxis='y', stackdir='center', dotsize=1)+
-  facet_grid(Target~`Sample and filtering`)+
+  facet_grid(`Sample and filtering` ~ Target)+
   scale_y_log10()+
   theme_bw()+
-  theme(axis.title.x=element_blank(),legend.position="none")+
+  theme(axis.title.x=element_blank(),legend.position="top")+
   scale_fill_manual(values = c("#3b3b3b","#4173C6","#FF5733"))
 
 ```
@@ -212,7 +211,6 @@ combo_DESeq2_IBC_Gen2$Sample = factor(combo_DESeq2_IBC_Gen2$Sample, levels = c("
 combo_DESeq2_IBC_Gen2 %>%
   ggplot(aes(x = Sample, y = `DESeq2-normalized counts`, color = Target, ID=DESeq2_sample_name))+
   geom_point(shape = 1, position = position_dodge())+
-  # theme(axis.text.x=element_text(angle=90,hjust = 1))+
   facet_grid(`Sample and filtering`~., scales = "free_y")+
   scale_y_log10()+
   theme_bw()+
