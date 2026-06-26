@@ -1,6 +1,6 @@
 ---
 title: "clinical_PBMC_correlations.Rmd"
-date: "2026-06-04"
+date: "2026-06-26"
 output: html_document
 ---
 
@@ -24,7 +24,7 @@ labels = c("I14","I23","I25","H04","N39","N25","N11","N16","I02","H23","N17","I3
 # stage graph- Figure S8A
 Final_mean_PBMC_CRISPR_60 %>%
   ggplot(aes(x = Stage, y =`Mean Fluorescence Recovery (ΔF%)`, fill = `Sample Type`))+
-  geom_violin(alpha = 0.5, position = "identity")+
+  geom_violin(alpha = 0.5, draw_quantiles = c(0.25, 0.5, 0.75), position = "identity")+
   geom_dotplot(binaxis='y', stackdir='center', dotsize=0.5)+
   facet_wrap(.~`crRNA Target`, scales = "free_y")+
   theme_bw()+
@@ -44,7 +44,7 @@ Final_mean_PBMC_CRISPR_60 %>%
 # subtype graph- Figure S8B
 Final_mean_PBMC_CRISPR_60 %>%
   ggplot(aes(x = Subtype, y =`Mean Fluorescence Recovery (ΔF%)`, fill = `Sample Type`))+
-  geom_violin(alpha = 0.5, position = "identity")+
+  geom_violin(alpha = 0.5, draw_quantiles = c(0.25, 0.5, 0.75), position = "identity")+
   geom_dotplot(binaxis='y', stackdir='center', dotsize=0.5)+
   facet_wrap(.~`crRNA Target`, scales = "free_y")+
   theme_bw()+
