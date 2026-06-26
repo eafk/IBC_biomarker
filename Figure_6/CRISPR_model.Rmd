@@ -1,6 +1,6 @@
 ---
 title: "CRISPR_model.Rmd"
-date: "2026-06-09"
+date: "2026-06-26"
 output: html_document
 ---
 
@@ -96,7 +96,7 @@ summary(model_combined)
 Final_mean_PBMC_CRISPR_60_wide$biomarker_score <- predict(model_combined, type = "link")
 
 ggplot(Final_mean_PBMC_CRISPR_60_wide, aes(x = `Sample Type`, y = biomarker_score, fill = `Sample Type`)) +
-  geom_violin(alpha = 0.5, position = "identity")+
+  geom_violin(alpha = 0.5, draw_quantiles = c(0.25, 0.5, 0.75), position = "identity")+
   geom_dotplot(binaxis='y', stackdir='center', dotsize=0.5)+
   scale_fill_manual(values = c(
     "Healthy" = "#3b3b3b",
