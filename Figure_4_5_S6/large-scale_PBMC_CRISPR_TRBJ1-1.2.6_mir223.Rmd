@@ -1,6 +1,6 @@
 ---
 title: "large-scale_PBMC_CRISPR_TRBJ1-1.2.6_mir223.Rmd"
-date: "2026-06-09"
+date: "2026-06-26"
 output: html_document
 ---
 
@@ -131,7 +131,7 @@ meannormalizedData %>%
   filter(Min == 60) %>%
   filter(`Sample Type`=="PBMC" & `Reaction Conditions` == "PNK+/PolyA+/RT+") %>% 
   ggplot(aes(x = Sample_Name, y = `Mean Fluorescence Recovery (ΔF%)`, fill = Sample_Name))+
-  geom_violin(aes(alpha = 0.5))+
+  geom_violin(aes(alpha = 0.5), draw_quantiles = c(0.25, 0.5, 0.75))+
   geom_dotplot(binaxis='y', stackdir='center', dotsize=0.5)+
   facet_wrap(.~`crRNA Target`, scales = "free_y", nrow = 1)+
   theme(axis.text.x=element_text(angle=90,hjust = 1))+
